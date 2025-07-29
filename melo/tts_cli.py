@@ -5,10 +5,6 @@ import logging
 from pathlib import Path
 from typing import Optional, List
 from melo.api import TTS
-import  download_utils
-
-LOG_DIR = Path('logs')
-LOG_DIR.mkdir(exist_ok=True)
 
 # Configurar logging
 logging.basicConfig(
@@ -16,13 +12,25 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(LOG_DIR / 'tts.log', mode='a', encoding='utf-8')
+        logging.FileHandler('tts.log', mode='a', encoding='utf-8')
     ]
 )
 logger = logging.getLogger(__name__)
 
 # Idiomas soportados
 SUPPORTED_LANGUAGES = ['EN', 'ES', 'FR', 'ZH', 'JP', 'KR']
+
+def resolve_checkpoint_path(ckpt_path: Optional[str], language: str) -> str:
+    """Resuelve la ruta del checkpoint según la lógica especificada"""
+    if ckpt_path is None:
+        # Construir ruta por defecto: checkpoints/{LANGUAGE}/checkpoint.pth
+        default_path = Path("checkpoints") / language.upper() / "checkpoint.pth"
+        logger.info(f"Using default checkpoint path: {default_path}")
+        return str(default_path)
+    else:
+        # Usar la ruta proporcionada
+        logger.info(f"Using provided checkpoint path: {ckpt_path}")
+        return ckpt_path
 
 def validate_inputs(ckpt_path: str, text: str, language: str, output_dir: str) -> None:
     """Valida todos los parámetros de entrada"""
@@ -46,7 +54,7 @@ def validate_inputs(ckpt_path: str, text: str, language: str, output_dir: str) -
         Path(output_dir).mkdir(parents=True, exist_ok=True)
     except PermissionError:
         raise click.BadParameter(f"No permission to create directory: {output_dir}")
-    
+
 def load_text_from_file(file_path: str) -> str:
     """Carga texto desde un archivo"""
     try:
@@ -82,7 +90,7 @@ def initialize_model(ckpt_path: str, language: str, device: str) -> TTS:
     except Exception as e:
         logger.error(f"Failed to load model: {str(e)}")
         raise click.ClickException(f"Model loading failed: {str(e)}")
-    
+
 def generate_audio_files(model: TTS, text: str, output_dir: str, 
                         speakers: Optional[List[str]] = None,
                         speed: float = 1.0,
@@ -131,12 +139,11 @@ def generate_audio_files(model: TTS, text: str, output_dir: str,
             except Exception as e:
                 logger.error(f"Failed to generate audio for speaker {spk_name}: {str(e)}")
                 continue
-        
+
 @click.command()
 @click.option('--ckpt_path', '-m', 
               type=click.Path(exists=True), 
-              required=True,
-              defaut="checkpoints/"
+              required=False,
               help="Path to the checkpoint file")
 @click.option('--text', '-t', 
               type=str, 
@@ -173,25 +180,25 @@ def generate_audio_files(model: TTS, text: str, output_dir: str,
 @click.option('--verbose', '-v',
               is_flag=True,
               help="Enable verbose logging")
-def main(ckpt_path: str, text: Optional[str], text_file: Optional[str], 
+def main(ckpt_path: Optional[str], text: Optional[str], text_file: Optional[str], 
          language: str, output_dir: str, speakers: tuple, device: str,
          speed: float, format: str, list_speakers: bool, verbose: bool):
     """
-    Advanced Text-to-Speech CLI tool using MeloTTS+
+    Advanced Text-to-Speech CLI tool using MeloTTS
     
     Examples:
     \b
     # Generate from text
-    python tts_cli.py -m checkpoint.pth -t "Hello world" -l EN
+    python tts_cli.py -m model.pth -t "Hello world" -l EN
     
     # Generate from file
-    python tts_cli.py -m checkpoint.pth -f input.txt -l EN
+    python tts_cli.py -m model.pth -f input.txt -l EN
     
     # Use specific speakers
-    python tts_cli.py -m checkpoint.pth -t "Hello" -s speaker1 -s speaker2
+    python tts_cli.py -m model.pth -t "Hello" -s speaker1 -s speaker2
     
     # List available speakers
-    python tts_cli.py -m checkpoint.pth --list-speakers
+    python tts_cli.py -m model.pth --list-speakers
     """
     
     # Configurar nivel de logging
@@ -199,6 +206,9 @@ def main(ckpt_path: str, text: Optional[str], text_file: Optional[str],
         logging.getLogger().setLevel(logging.DEBUG)
     
     try:
+        # Resolver la ruta del checkpoint
+        resolved_ckpt_path = resolve_checkpoint_path(ckpt_path, language)
+        
         # Validar que solo se use text o text-file
         if text and text_file:
             raise click.BadParameter("Cannot use both --text and --text-file")
@@ -207,7 +217,7 @@ def main(ckpt_path: str, text: Optional[str], text_file: Optional[str],
             raise click.BadParameter("Must provide either --text, --text-file, or --list-speakers")
         
         # Inicializar modelo
-        model = initialize_model(ckpt_path, language.upper(), device)
+        model = initialize_model(resolved_ckpt_path, language.upper(), device)
         
         # Listar speakers si se solicita
         if list_speakers:
@@ -221,7 +231,7 @@ def main(ckpt_path: str, text: Optional[str], text_file: Optional[str],
             text = load_text_from_file(text_file)
         
         # Validar inputs
-        validate_inputs(ckpt_path, text, language, output_dir)
+        validate_inputs(resolved_ckpt_path, text, language, output_dir)
         
         # Convertir speakers tuple a list
         speaker_list = list(speakers) if speakers else None
